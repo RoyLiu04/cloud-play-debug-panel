@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xbox Cloud Gaming Unlock
 // @namespace    https://github.com/RoyLiu04/xbox-cloud-unlock
-// @version      3.0.1
+// @version      3.1.0
 // @description  让 play.xbox.com 在受限地区可用：改写市场判定与请求头，并提供串流链路设置（数据中心 / 强制 IPv4 / 画质）与迷你 QoS 读数
 // @author       RoyLiu04
 // @license      MIT
@@ -18,7 +18,8 @@
  *   1. 地区解锁：改写 gears / xboxcomfd 的 experimentation 响应（trafficFilters.territory、market），
  *      并把 territory cookie 校正为所选地区，避免播放页把当前出口 IP 判成「不支持的市场」。
  *   2. 串流链路：可固定数据中心（改写 offeringSettings.regions 的 isDefault 与顺序）、
- *      剔除 ICE 中的 IPv6 候选（强制 IPv4）、按 settings.osName 选择画质档位。
+ *      剔除 ICE 中的 IPv6 候选（强制 IPv4）、按 settings.osName 选择画质档位
+ *      （自动模式下视口高度 ≤ 900 视为小屏，直接压到 720p 档，避免掌机被推 1440p）。
  *   3. 状态读数：右下角小药丸显示实时丢包率，展开可看 RTT / 码率 / 分辨率 / 丢帧，并可切换上述设置。
  *
  * 工作方式
@@ -46,9 +47,9 @@
 (function () {
   'use strict';
 
-  if (window.__XCU__ && window.__XCU__.v === '3.0.1') return;
+  if (window.__XCU__ && window.__XCU__.v === '3.1.0') return;
 
-  const VER = '3.0.1';
+  const VER = '3.1.0';
   const LS_KEY = 'xcu.region';       // 解锁地区（IP）
   const LS_SRV = 'xcu.streamRegion'; // 串流数据中心
   const LS_V4 = 'xcu.forceIPv4';     // 强制 IPv4
@@ -80,6 +81,17 @@
     r1080: { osName: 'windows', label: '1080p' },
     r720: { osName: 'android', label: '720p' }
   };
+
+  // 小屏（掌机 800p、笔记本 768p 这类）上站点仍会协商到 1440p/1080p，
+  // 多出来的分辨率既看不见又白烧带宽和电量，自动模式下直接压到 720p 档。
+  const SMALL_H = 900;
+  const SMALL_AUTO = { osName: 'android', label: '自动·720p' };
+
+  function isSmallScreen() {
+    try {
+      return window.innerHeight > 0 && window.innerHeight <= SMALL_H;
+    } catch (e) { return false; }
+  }
 
   const GSSV_RE = /(^|\.)gssv-play-[a-z0-9-]*\.xboxlive\.com$/i;
   const GEARS_RE = /^gears(-staging)?\.xboxservices\.com$/i;
@@ -145,7 +157,10 @@
   }
   function resCfg() {
     const k = getPref(LS_RES, 'auto');
-    return RES_MODES[k] || RES_MODES.auto;
+    const base = RES_MODES[k] || RES_MODES.auto;
+    // 只有「自动」才按屏幕尺寸判断；手动选过 1080p / 720p 就尊重手动选择
+    if (!base.osName && isSmallScreen()) return SMALL_AUTO;
+    return base;
   }
   function v4on() { return getPref(LS_V4, '1') !== '0'; }
 
