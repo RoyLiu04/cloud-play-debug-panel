@@ -110,6 +110,7 @@
     playPatched: 0,
     pcs: 0,
     qos: null,
+    qosAt: 0,
     hist: [],
     histMin: null,
     startedAt: Date.now(),
@@ -523,7 +524,7 @@
     if (qosBusy || !pc || typeof pc.getStats !== 'function') return;
     qosBusy = true;
     PCQos(pc).then(function (q) {
-      if (q) { S.qos = q; schedule(); }
+      if (q) { S.qos = q; S.qosAt = Date.now(); schedule(); }
     }, function () { }).then(function () { qosBusy = false; });
   }
 
@@ -1013,7 +1014,10 @@
 
     // 进入串流后画面容器常带 role="dialog"，且全屏时面板已自动收起，
     // 药丸必须保持可见可点（Steam Deck 上要用手柄光标去点它）。
-    const modal = (S.pcs > 0) ? false : modalHit();
+    // 用「最近 8 秒内还有 QoS 采样」而不是「曾经建过连接」来判定，
+    // 否则退出串流后 S.pcs 不会归零，面板会永远不再给站点对话框让位。
+    const streaming = !!(S.qosAt && (Date.now() - S.qosAt < 8000));
+    const modal = streaming ? false : modalHit();
     if (cardEl) cardEl.style.display = (openUI && !modal) ? 'block' : 'none';
     if (pillEl) {
       pillEl.style.opacity = modal ? '.18' : '1';
