@@ -33,6 +33,12 @@
  *   · 面板的「复制报告」只包含版本、地区配置、链路统计与最近错误消息，
  *     不含页面内容、接口响应体或账号信息。
  *
+ * 参考项目
+ *   · redphx/better-xcloud — https://github.com/redphx/better-xcloud
+ *     （regions 排序改写、osName 画质档位、x-ms-device-info 设备伪装、gssv 拦截方式）
+ *   · darkchaox/xbox-cloud-gaming-optimizer — https://github.com/darkchaox/xbox-cloud-gaming-optimizer
+ *     （旧版页面的地区解锁思路，本项目由此出发）
+ *
  * 免责声明
  *   仅供学习与研究使用。绕过地区限制可能违反服务条款，使用风险与后果由使用者自行承担。
  */

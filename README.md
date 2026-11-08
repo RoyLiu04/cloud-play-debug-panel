@@ -27,22 +27,30 @@ GET  <dc>.core.../configuration、/ice                           → 媒体服�
 
 ## 安装
 
-**Tampermonkey（Chrome / Edge）**
+**Tampermonkey（Chrome / Edge / Firefox，推荐）**
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展（桌面版免费）
 2. 打开本仓库的 `xbox-cloud-unlock.user.js`，点右上角 **Raw**，脚本管理器会自动弹出安装页
 3. Edge 需要在扩展详情里打开「允许用户脚本」（部分版本还需开启「开发人员模式」）
-
-**Userscripts（Safari / macOS）**
-
-1. 从 App Store 安装 Userscripts 扩展并在 Safari 设置里授权
-2. 打开 raw 链接，按提示导入
+4. macOS 上同样适用：装 Chrome 或 Edge，再装 Tampermonkey 即可
 
 **手动**
 
 把 `xbox-cloud-unlock.user.js` 的内容复制到脚本管理器里新建脚本即可。
 
 > 安装后请删除/禁用其它同类脚本，同名逻辑重复注入会互相干扰。
+
+### 关于 Safari
+
+**Safari 上暂时不可用**，包括 App Store 的 Userscripts 扩展和 Tampermonkey for Safari（后者还需付费）。
+
+原因不在脚本本身，而在这类扩展的执行环境：
+
+- Safari 的扩展把脚本跑在**隔离世界（isolated world）**里，`window` 与页面主世界不是同一个对象。本脚本的核心是覆写页面主世界的 `window.fetch`、`RTCPeerConnection`，在隔离世界里改的是另一个 `fetch`，页面根本不会调用到，表现就是「装了但完全没反应」。
+- 页面 CSP 为 `script-src 'self' 'nonce-…'`，没有 `unsafe-inline` / `unsafe-eval`，注入 `<script>` 或 `eval` 逃逸到主世界的路子也被封了。
+- Chrome / Edge 的 Tampermonkey 支持 `world: 'MAIN'`，脚本可以直接在主世界执行，这是本脚本能工作的前提。
+
+所以请用 Chromium 系浏览器（Chrome / Edge / Brave 等）或 Firefox。
 
 ## 使用
 
@@ -77,6 +85,15 @@ GET  <dc>.core.../configuration、/ice                           → 媒体服�
 ## 兼容性
 
 针对 2026-11 的页面结构（`web-app-version: hotfix-1.0.2611.0612`）编写。站点大改版后选择器与接口可能变化，需要相应调整。
+
+## 参考项目
+
+本项目的接口字段、改写位置与串流参数思路来自下面两个开源项目，在此致谢：
+
+- **[redphx/better-xcloud](https://github.com/redphx/better-xcloud)** —— Xbox 云游戏（含旧版 play.xbox.com 与 xCloud）功能增强脚本。本项目的 `offeringSettings.regions` 排序改写、`settings.osName` 画质档位、`x-ms-device-info` 设备伪装、gssv 请求拦截方式均参考其实现（`src/utils/xcloud-interceptor.ts`、`src/utils/region.ts`）。
+- **[darkchaox/xbox-cloud-gaming-optimizer](https://github.com/darkchaox/xbox-cloud-gaming-optimizer)** —— 旧版云游戏页面的大陆解锁与串流优化脚本，也是本项目最初的起点；其解锁思路（地区判定改写 + 请求头注入）在新版页面上失效，本项目针对新架构重写了注入点。
+
+新版 `play.xbox.com` 是 React Router 7 SSR 应用，`X-Forwarded-For` 注入、`trafficFilters.territory` 改写、`marketAccessContext.physicalMarket` 绕过这几处是针对新架构新增的，两个上游项目都还没有对应实现。
 
 ## 隐私
 
