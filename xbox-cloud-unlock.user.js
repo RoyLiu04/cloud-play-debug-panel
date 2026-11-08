@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xbox Cloud Gaming Unlock
 // @namespace    https://github.com/RoyLiu04/xbox-cloud-unlock
-// @version      3.0.0
+// @version      3.0.1
 // @description  让 play.xbox.com 在受限地区可用：改写市场判定与请求头，并提供串流链路设置（数据中心 / 强制 IPv4 / 画质）与迷你 QoS 读数
 // @author       RoyLiu04
 // @license      MIT
@@ -46,9 +46,9 @@
 (function () {
   'use strict';
 
-  if (window.__XCU__ && window.__XCU__.v === '3.0.0') return;
+  if (window.__XCU__ && window.__XCU__.v === '3.0.1') return;
 
-  const VER = '3.0.0';
+  const VER = '3.0.1';
   const LS_KEY = 'xcu.region';       // 解锁地区（IP）
   const LS_SRV = 'xcu.streamRegion'; // 串流数据中心
   const LS_V4 = 'xcu.forceIPv4';     // 强制 IPv4
@@ -719,7 +719,7 @@
 
   function buildUI() {
     if (wrap) return wrap;
-    const host = document.body || document.documentElement;
+    const host = mountTarget() || document.documentElement;
     if (!host) return null;
 
     wrap = mk('div', 'position:fixed;right:12px;bottom:64px;z-index:' + ZBASE + ';pointer-events:none;' +
@@ -964,6 +964,23 @@
     } catch (e) { alert('复制失败，已打印到控制台'); }
   }
 
+  // 串流开始后页面会调用 Fullscreen API 进入全屏。全屏状态下浏览器只渲染全屏元素及其后代，
+  // 挂在 body 上的面板会被整块隐藏（Steam Deck / Game Mode 上表现为「进游戏后药丸消失，
+  // 打开 Steam 指南打断全屏才又出现」）。所以面板要跟着全屏元素走。
+  function fullscreenHost() {
+    let fs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (!fs) return null;
+    try {
+      if (fs.tagName === 'VIDEO') fs = fs.parentElement || fs.parentNode;
+      if (fs && fs.nodeType === 1 && fs.appendChild) return fs;
+    } catch (e) { }
+    return null;
+  }
+
+  function mountTarget() {
+    return fullscreenHost() || document.body;
+  }
+
   // 站点对话框是否真的压到面板身上：只用「可见 + 与面板矩形相交」判定，
   // 避免框架常驻隐藏节点造成误判（误判会让面板一直看不见）。
   function modalHit() {
@@ -978,6 +995,8 @@
         if (wrap.contains(n)) continue;
         const r = n.getBoundingClientRect();
         if (r.width < 60 || r.height < 60) continue;
+        // 覆盖大半个视口的容器是串流画面本体，不是对话框，不能让它把面板藏起来
+        if (r.width > window.innerWidth * 0.7 && r.height > window.innerHeight * 0.7) continue;
         if (r.right > wr.left - 8 && r.left < wr.right + 8 &&
             r.bottom > wr.top - 8 && r.top < wr.bottom + 8) return true;
       }
@@ -988,11 +1007,13 @@
   // ---------- 十五、主循环 ----------
   function tick() {
     try {
-      if (wrap && document.body && wrap.parentNode !== document.body) document.body.appendChild(wrap);
+      const host = mountTarget();
+      if (wrap && host && wrap.parentNode !== host) host.appendChild(wrap);
     } catch (e) { }
 
-    // 站点弹窗/抽屉（设置、购买、详情）打开时整体让开：卡片隐藏、药丸淡化且不可点
-    const modal = modalHit();
+    // 进入串流后画面容器常带 role="dialog"，且全屏时面板已自动收起，
+    // 药丸必须保持可见可点（Steam Deck 上要用手柄光标去点它）。
+    const modal = (S.pcs > 0) ? false : modalHit();
     if (cardEl) cardEl.style.display = (openUI && !modal) ? 'block' : 'none';
     if (pillEl) {
       pillEl.style.opacity = modal ? '.18' : '1';
@@ -1010,6 +1031,15 @@
   function boot() {
     buildUI();
     update();
+    // 进出全屏时立刻把面板搬到新的宿主里，不依赖 1.5s 的 tick
+    ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (ev) {
+      document.addEventListener(ev, function () {
+        try {
+          const host = mountTarget();
+          if (wrap && host) host.appendChild(wrap);
+        } catch (e) { }
+      }, true);
+    });
     setInterval(tick, 1500);
     setInterval(pumpQos, 2000);
     console.log('[xcu] v' + VER + ' 启动 | 数据中心', srvCfg().label, '| IPv4', v4on(), '| 画质', resCfg().label);
