@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xbox Cloud Gaming Unlock
 // @namespace    https://github.com/RoyLiu04/xbox-cloud-unlock
-// @version      3.1.1
+// @version      3.2.0
 // @description  让 play.xbox.com 在受限地区可用：改写市场判定与请求头，并提供串流链路设置（数据中心 / 强制 IPv4 / 画质）与迷你 QoS 读数
 // @author       RoyLiu04
 // @license      MIT
@@ -47,16 +47,16 @@
 (function () {
   'use strict';
 
-  if (window.__XCU__ && window.__XCU__.v === '3.1.1') return;
+  if (window.__XCU__ && window.__XCU__.v === '3.2.0') return;
 
-  const VER = '3.1.1';
+  const VER = '3.2.0';
   const LS_KEY = 'xcu.region';       // 解锁地区（IP）
   const LS_SRV = 'xcu.streamRegion'; // 串流数据中心
   const LS_V4 = 'xcu.forceIPv4';     // 强制 IPv4
   const LS_RES = 'xcu.resolution';   // 画质档位
 
   // 出口 IP → 期望地区。下面的 IP 只是公开项目中常见的示例地址，
-  // 换成你自己可用的出口地址即可（也可在面板里循环切换或直接写进 localStorage 的 xcu.region）。
+  // 换成你自己可用的出口地址即可（也可在面板里选择，或直接写进 localStorage 的 xcu.region）。
   const REGIONS = {
     jp: { ip: '138.199.21.239', territory: 'JP', name: '日本' },
     us: { ip: '143.244.47.65', territory: 'US', name: '美国' },
@@ -690,7 +690,7 @@
   const ZBASE = 2147483000;
   const MONO = 'ui-monospace,Menlo,Consolas,monospace';
 
-  let wrap = null, pillEl = null, cardEl = null, dotEl = null, pillTxt = null;
+  let wrap = null, pillEl = null, cardEl = null, dotEl = null, pillTxt = null, pickEl = null;
   let openUI = false, userTouched = false, autoFolded = false, pending = false;
   const el = {};
 
@@ -830,15 +830,29 @@
     cardEl.appendChild(el.hint);
 
     const row1 = mk('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:7px');
-    el.btnSrv = pillBtn('数据中心', cycleServer);
-    el.btnRes = pillBtn('画质', cycleRes);
+    el.btnSrv = pillBtn('数据中心', function () { openPicker('srv'); });
+    el.btnRes = pillBtn('画质', function () { openPicker('res'); });
     el.btnV4 = pillBtn('IPv4', toggleV4);
-    el.btnRegion = pillBtn('地区', cycleRegion);
+    el.btnRegion = pillBtn('商店地区', function () { openPicker('region'); });
+    el.btnSrv.title = '点开选择数据中心（下一局生效，不刷新）';
+    el.btnRes.title = '点开选择画质档位（下一局生效，不刷新）';
+    el.btnRegion.title = '点开选择商店地区（选中后刷新一次页面）';
+    // 这几个按钮自己负责开关菜单，不能被下面的「点外面就收起」当成外部点击
+    [el.btnSrv, el.btnRes, el.btnRegion].forEach(function (b) { b.setAttribute('data-xcu-pick', '1'); });
     row1.appendChild(el.btnSrv);
     row1.appendChild(el.btnRes);
     row1.appendChild(el.btnV4);
     row1.appendChild(el.btnRegion);
     cardEl.appendChild(row1);
+
+    // 选项列表：做成卡片里的一块，而不是 fixed 浮层 —— 面板挂在全屏元素内部，
+    // fixed 浮层在全屏下会被裁掉。展开只是让卡片往下变高，药丸位置不受影响。
+    pickEl = mk('div', [
+      'display:none', 'margin-top:5px', 'padding:3px', 'box-sizing:border-box',
+      'border:1px solid #30363d', 'border-radius:7px',
+      'background:rgba(6,10,15,.55)', 'max-height:210px', 'overflow:auto'
+    ].join(';'));
+    cardEl.appendChild(pickEl);
 
     const row2 = mk('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:5px');
     const copyBtn = pillBtn('复制报告', copyAll);
@@ -858,7 +872,8 @@
     if (byUser) userTouched = true;
     if (!cardEl) return;
     cardEl.style.display = openUI ? 'block' : 'none';
-    if (openUI) update();
+    if (!openUI) closePicker();
+    else update();
   }
 
   function schedule() {
@@ -876,7 +891,7 @@
     if (!q) return '';
     if (loss != null && loss > 5) {
       if (!v4on()) return '丢包偏高：先点「IPv4」切回强制';
-      if (srvCfg().name !== 'JAPANEAST') return '丢包 ' + loss.toFixed(1) + '%：点「数据中心」换东京再比一局';
+      if (srvCfg().name !== 'JAPANEAST') return '丢包 ' + loss.toFixed(1) + '%：点「数据中心」选东京再比一局';
       return '东京也丢 ' + loss.toFixed(1) + '% → 线路问题，不是画质或数据中心';
     }
     if (q.decoded || q.dropped) {
@@ -942,45 +957,140 @@
       else el.hint.style.display = 'none';
     }
 
-    el.btnSrv.textContent = '数据中心 ' + srvBtnLabel();
-    el.btnRes.textContent = '画质 ' + resBtnLabel();
+    el.btnSrv.textContent = '数据中心 ' + srvBtnLabel() + ' ▾';
+    el.btnRes.textContent = '画质 ' + resBtnLabel() + ' ▾';
     el.btnV4.textContent = 'IPv4 ' + (v4on() ? '强制' : '关');
-    el.btnRegion.textContent = '商店地区 ' + c.name;
+    el.btnRegion.textContent = '商店地区 ' + c.name + ' ▾';
   }
 
-  // ---------- 十四、设置（直接循环，不弹 prompt，避免全屏下被拦）----------
-  function cycleServer() {
-    const keys = Object.keys(SERVERS);
-    const cur = getPref(LS_SRV, 'auto');
-    const i = Math.max(0, keys.indexOf(cur));
-    const next = keys[(i + 1) % keys.length];
-    setPref(LS_SRV, next);
-    S.serverActual = '';
-    S.serverPin = SERVERS[next].name;
-    update();
+  // ---------- 十四、设置：点开列表，直接选中目标值 ----------
+  // 早先是「点一下切下一个值」。商店地区一改就整页刷新，循环下来要点很多次、
+  // 还得反复重进游戏，所以改成列出全部选项、一次点中：
+  //   · 数据中心 / 画质：选中即生效（下一局开游戏用新值），不刷新
+  //   · 商店地区：选中后刷新一次页面
+  //   · 菜单是卡片内的一块（见 buildUI），全屏下也不会被裁掉
+  let pickKind = '';   // '' | 'srv' | 'res' | 'region'
+
+  function pickApply(kind, k) {
+    if (kind === 'srv') {
+      setPref(LS_SRV, k);
+      S.serverActual = '';
+      S.serverPin = SERVERS[k].name;
+      return false;
+    }
+    if (kind === 'res') {
+      setPref(LS_RES, k);
+      return false;
+    }
+    if (kind === 'region') {
+      setPref(LS_KEY, k);
+      return true;   // 需要刷新
+    }
+    return false;
   }
 
-  function cycleRes() {
-    const keys = Object.keys(RES_MODES);
-    const cur = getPref(LS_RES, 'auto');
-    const i = Math.max(0, keys.indexOf(cur));
-    setPref(LS_RES, keys[(i + 1) % keys.length]);
-    update();
+  function pickCur(kind) {
+    if (kind === 'srv') return getPref(LS_SRV, 'auto');
+    if (kind === 'res') return getPref(LS_RES, 'auto');
+    return cfg().key;
   }
+
+  function pickItems(kind) {
+    if (kind === 'srv') {
+      return Object.keys(SERVERS).map(function (k) {
+        return { k: k, label: SERVERS[k].label, sub: SERVERS[k].name || '服务端分派' };
+      });
+    }
+    if (kind === 'res') {
+      return Object.keys(RES_MODES).map(function (k) {
+        const m = RES_MODES[k];
+        return {
+          k: k, label: m.label,
+          sub: m.osName ? (m.osName === 'windows' ? 'windows 档' : 'android 档')
+            : (isSmallScreen() ? '小屏按 720p 推' : '跟随站点协商')
+        };
+      });
+    }
+    const out = Object.keys(REGIONS).map(function (k) {
+      return { k: k, label: REGIONS[k].name, sub: REGIONS[k].territory };
+    });
+    out.push({ k: 'off', label: '关闭解锁', sub: '不改写' });
+    return out;
+  }
+
+  function openPicker(kind) {
+    pickKind = pickKind === kind ? '' : kind;
+    renderPicker();
+  }
+
+  function closePicker() {
+    pickKind = '';
+    renderPicker();
+  }
+
+  function syncPickBtns() {
+    [['srv', el.btnSrv], ['res', el.btnRes], ['region', el.btnRegion]].forEach(function (p) {
+      if (p[1]) p[1].style.borderColor = pickKind === p[0] ? '#1f6feb' : '#30363d';
+    });
+  }
+
+  function renderPicker() {
+    if (!pickEl) return;
+    syncPickBtns();
+    if (!pickKind) {
+      pickEl.style.display = 'none';
+      pickEl.textContent = '';
+      return;
+    }
+    pickEl.textContent = '';
+    pickEl.style.display = 'block';
+
+    const kind = pickKind;
+    const titles = { srv: '数据中心', res: '画质', region: '商店地区（选中后刷新页面）' };
+    pickEl.appendChild(mk('div', 'color:#8b949e;font-size:10px;padding:2px 6px 4px', titles[kind]));
+
+    const cur = pickCur(kind);
+    pickItems(kind).forEach(function (it) {
+      const on = it.k === cur;
+      const row = mk('div', [
+        'display:flex', 'align-items:center', 'justify-content:space-between', 'gap:8px',
+        'padding:4px 6px', 'border-radius:5px', 'cursor:pointer',
+        on ? 'background:rgba(31,111,235,.18)' : ''
+      ].join(';'));
+      row.appendChild(mk('span', 'color:' + (on ? '#58a6ff' : '#c9d1d9'), (on ? '✓ ' : '') + it.label));
+      row.appendChild(mk('span', 'color:#6e7681;font-size:10px', it.sub || ''));
+      row.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+      row.addEventListener('pointerenter', function () {
+        if (!on) row.style.background = 'rgba(110,118,129,.16)';
+      });
+      row.addEventListener('pointerleave', function () {
+        row.style.background = on ? 'rgba(31,111,235,.18)' : 'transparent';
+      });
+      row.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        const needReload = pickApply(kind, it.k);
+        closePicker();
+        if (needReload) location.reload();
+        else update();
+      });
+      pickEl.appendChild(row);
+    });
+  }
+
+  // 点卡片外面把菜单收起来（菜单里的点击和那三个按钮不算外面）
+  document.addEventListener('pointerdown', function (e) {
+    if (!pickKind) return;
+    const t = e.target;
+    if (t && pickEl && pickEl.contains(t)) return;
+    if (t && t.closest && t.closest('[data-xcu-pick]')) return;
+    closePicker();
+  }, true);
 
   function toggleV4() {
     setPref(LS_V4, v4on() ? '0' : '1');
     S.v6dropped = 0;
     update();
-  }
-
-  function cycleRegion() {
-    const keys = Object.keys(REGIONS).concat(['off']);
-    const cur = cfg().key;
-    const i = Math.max(0, keys.indexOf(cur));
-    const next = keys[(i + 1) % keys.length];
-    setPref(LS_KEY, next);
-    location.reload();
   }
 
   function hardReload() {
