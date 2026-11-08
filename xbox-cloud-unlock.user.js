@@ -1,16 +1,16 @@
 // ==UserScript==
 // @name         Xbox Cloud Gaming Unlock
-// @namespace    https://github.com/OWNER/xbox-cloud-unlock
+// @namespace    https://github.com/RoyLiu04/xbox-cloud-unlock
 // @version      3.0.0
 // @description  让 play.xbox.com 在受限地区可用：改写市场判定与请求头，并提供串流链路设置（数据中心 / 强制 IPv4 / 画质）与迷你 QoS 读数
-// @author       OWNER
+// @author       RoyLiu04
 // @license      MIT
 // @match        https://play.xbox.com/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/OWNER/xbox-cloud-unlock/main/xbox-cloud-unlock.user.js
-// @downloadURL  https://raw.githubusercontent.com/OWNER/xbox-cloud-unlock/main/xbox-cloud-unlock.user.js
-// @supportURL   https://github.com/OWNER/xbox-cloud-unlock/issues
+// @updateURL    https://raw.githubusercontent.com/RoyLiu04/xbox-cloud-unlock/main/xbox-cloud-unlock.user.js
+// @downloadURL  https://raw.githubusercontent.com/RoyLiu04/xbox-cloud-unlock/main/xbox-cloud-unlock.user.js
+// @supportURL   https://github.com/RoyLiu04/xbox-cloud-unlock/issues
 // ==/UserScript==
 
 /*
