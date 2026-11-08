@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xbox Cloud Gaming Unlock
 // @namespace    https://github.com/RoyLiu04/xbox-cloud-unlock
-// @version      3.1.0
+// @version      3.1.1
 // @description  让 play.xbox.com 在受限地区可用：改写市场判定与请求头，并提供串流链路设置（数据中心 / 强制 IPv4 / 画质）与迷你 QoS 读数
 // @author       RoyLiu04
 // @license      MIT
@@ -47,9 +47,9 @@
 (function () {
   'use strict';
 
-  if (window.__XCU__ && window.__XCU__.v === '3.1.0') return;
+  if (window.__XCU__ && window.__XCU__.v === '3.1.1') return;
 
-  const VER = '3.1.0';
+  const VER = '3.1.1';
   const LS_KEY = 'xcu.region';       // 解锁地区（IP）
   const LS_SRV = 'xcu.streamRegion'; // 串流数据中心
   const LS_V4 = 'xcu.forceIPv4';     // 强制 IPv4
@@ -163,6 +163,25 @@
     return base;
   }
   function v4on() { return getPref(LS_V4, '1') !== '0'; }
+
+  // 按钮上不要只写「自动」——把自动实际选中的值显示出来
+  //   数据中心：自动模式下服务端分配的机房（CKR/EJP…），要进一局才会知道
+  //   画质：自动模式下站点真正协商到的分辨率（小屏自动 720p 时 resCfg 已带标签）
+  function srvBtnLabel() {
+    const c = srvCfg();
+    if (c.name) return c.label;
+    const a = S.serverActual;
+    if (!a) return '自动';
+    return '自动·' + a;
+  }
+
+  function resBtnLabel() {
+    const r = resCfg();
+    if (r.osName) return r.label;
+    const q = S.qos;
+    if (q && q.h) return '自动·' + q.h + 'p';
+    return '自动';
+  }
 
   function getCookie(n) {
     const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + n + '=([^;]*)'));
@@ -661,11 +680,12 @@
   } catch (e) { }
 
   // ---------- 十三、UI：一个小药丸 + 可折叠卡片 ----------
-  // 设计约束（v3.0 起）：
-  //   · 默认收成一个 ~24px 高的小药丸，放右下角，避开站点左侧边栏和「设置」
+  // 设计约束（v3.1.1 起）：
+  //   · 默认收成一个 ~24px 高的小药丸，居中贴屏幕顶部
+  //   · 容器宽度固定 260px、子元素居中 —— 展开卡片时容器只向下变高，
+  //     药丸的坐标完全不变（v3.1.0 之前卡片在药丸下方且容器贴底，展开会把药丸顶上去）
   //   · 外层容器 pointer-events:none，只有药丸/卡片本身可点 —— 绝不拦截页面点击
-  //   · 可拖动，位置记在 localStorage
-  //   · 进入串流自动收起；站点弹出对话框（设置/购买）时卡片自动让开
+  //   · 可拖动，位置记在 localStorage（拖动后改为绝对定位，需手动清除才能回中）
   const LS_POS = 'xcu.pos';
   const ZBASE = 2147483000;
   const MONO = 'ui-monospace,Menlo,Consolas,monospace';
@@ -682,6 +702,14 @@
     return null;
   }
 
+  function resetPos() {
+    try { localStorage.removeItem(LS_POS); } catch (e) { }
+    if (!wrap) return;
+    wrap.style.transform = 'translateX(-50%)';
+    wrap.style.left = '50%';
+    wrap.style.top = '8px';
+  }
+
   function mk(tag, css, text) {
     const n = document.createElement(tag);
     if (css) n.style.cssText = css;
@@ -690,18 +718,22 @@
   }
 
   function bindDrag(node, onTap) {
+    let lastTap = 0;
     node.addEventListener('pointerdown', function (ev) {
       if (ev.button !== 0) return;
-      const r = wrap.getBoundingClientRect();
-      const dx = ev.clientX - r.left, dy = ev.clientY - r.top;
+      // 抓取点相对「容器」左上角的偏移。容器默认用 left:50% + translateX(-50%) 居中，
+      // 所以这里必须用容器的 rect 而不是节点自己的 rect，否则一拖就跳。
+      const wr = wrap.getBoundingClientRect();
+      const offX = ev.clientX - wr.left;
+      const offY = ev.clientY - wr.top;
       let moved = false;
       function mv(e2) {
         if (!moved && Math.abs(e2.clientX - ev.clientX) + Math.abs(e2.clientY - ev.clientY) < 3) return;
         moved = true;
-        const x = Math.max(4, Math.min(window.innerWidth - r.width - 4, e2.clientX - dx));
-        const y = Math.max(4, Math.min(window.innerHeight - r.height - 4, e2.clientY - dy));
-        wrap.style.right = 'auto';
-        wrap.style.bottom = 'auto';
+        const w = wr.width, h = wr.height;
+        const x = Math.max(4, Math.min(Math.max(4, window.innerWidth - w - 4), e2.clientX - offX));
+        const y = Math.max(4, Math.min(Math.max(4, window.innerHeight - h - 4), e2.clientY - offY));
+        wrap.style.transform = 'none';
         wrap.style.left = x + 'px';
         wrap.style.top = y + 'px';
       }
@@ -714,7 +746,11 @@
               x: parseFloat(wrap.style.left), y: parseFloat(wrap.style.top)
             }));
           } catch (e) { }
-        } else if (onTap) { onTap(); }
+        } else if (onTap) {
+          const t = Date.now();
+          if (t - lastTap < 320) { lastTap = 0; resetPos(); }
+          else { lastTap = t; onTap(); }
+        }
       }
       window.addEventListener('pointermove', mv, true);
       window.addEventListener('pointerup', up, true);
@@ -738,13 +774,17 @@
     const host = mountTarget() || document.documentElement;
     if (!host) return null;
 
-    wrap = mk('div', 'position:fixed;right:12px;bottom:64px;z-index:' + ZBASE + ';pointer-events:none;' +
-      'font:11px/1.5 ' + MONO + ';color:#c9d1d9;text-align:right');
+    wrap = mk('div', [
+      'position:fixed', 'left:50%', 'top:8px', 'transform:translateX(-50%)',
+      'z-index:' + ZBASE, 'pointer-events:none',
+      'width:260px', 'max-width:calc(100vw - 16px)',
+      'display:flex', 'flex-direction:column', 'align-items:center',
+      'font:11px/1.5 ' + MONO, 'color:#c9d1d9', 'text-align:center'
+    ].join(';'));
     wrap.id = '__xcu_panel__';
     const saved = readPos();
     if (saved) {
-      wrap.style.right = 'auto';
-      wrap.style.bottom = 'auto';
+      wrap.style.transform = 'none';
       wrap.style.left = saved.x + 'px';
       wrap.style.top = saved.y + 'px';
     }
@@ -758,7 +798,7 @@
     ].join(';'));
     dotEl = mk('span', 'width:7px;height:7px;border-radius:50%;background:#8b949e;flex:0 0 auto');
     pillTxt = mk('span', 'color:#c9d1d9', 'xCloud');
-    pillEl.title = '单击展开 · 按住可拖动';
+    pillEl.title = '单击展开 · 按住可拖动 · 双击回到顶部中间';
     pillEl.appendChild(dotEl);
     pillEl.appendChild(pillTxt);
     wrap.appendChild(pillEl);
@@ -766,8 +806,8 @@
 
     // 卡片
     cardEl = mk('div', [
-      'pointer-events:auto', 'display:none', 'margin-top:6px', 'width:260px',
-      'max-width:calc(100vw - 24px)', 'box-sizing:border-box', 'text-align:left',
+      'pointer-events:auto', 'display:none', 'margin-top:6px',
+      'width:100%', 'max-width:calc(100vw - 16px)', 'box-sizing:border-box', 'text-align:left',
       'background:rgba(13,17,23,.96)', 'border:1px solid #30363d', 'border-radius:10px',
       'padding:8px 9px 9px', 'box-shadow:0 8px 26px rgba(0,0,0,.55)'
     ].join(';'));
@@ -861,16 +901,25 @@
 
     if (!openUI) return;
 
-    const curT = getCookie('territory') || '无';
-    const wantT = c.territory || '';
-    const okT = wantT ? String(curT).toUpperCase() === wantT.toUpperCase() : true;
-    const expAfter = String(S.expAfter || '?');
-    const okIp = wantT ? expAfter.toUpperCase() === wantT.toUpperCase() : true;
-
-    el.status.innerHTML =
-      '地区 <b style="color:#e6edf3">' + c.name + '</b>' +
-      ' · territory <b style="color:' + (okT ? '#3fb950' : '#d29922') + '">' + curT + '</b>' +
-      ' · IP <b style="color:' + (okIp ? '#3fb950' : '#f85149') + '">' + expAfter + '</b>';
+    // 状态行：设定值已经在下面的按钮上显示了，这行只在「实际 ≠ 设定」时才有意义。
+    // 一致就整行隐藏，把卡片空间让给链路读数。
+    const wantT = String(c.territory || '').toUpperCase();
+    const curT = String(getCookie('territory') || '').toUpperCase();
+    // expAfter 初始是占位文本「(未经过)」，只有拿到真正的两位地区码才算数
+    const expRaw = String(S.expAfter || '').toUpperCase();
+    const expT = /^[A-Z]{2}$/.test(expRaw) ? expRaw : '';
+    const diffs = [];
+    if (wantT) {
+      if (!curT) diffs.push('territory cookie 缺失');
+      else if (curT !== wantT) diffs.push('territory 实际 ' + curT + '，设定 ' + wantT);
+      if (expT && expT !== wantT) diffs.push('IP 判定 ' + expT + '，未改成 ' + wantT);
+    }
+    if (diffs.length) {
+      el.status.innerHTML = '<span style="color:#f85149">⚠ ' + diffs.join(' · ') + '</span>';
+      el.status.style.display = 'block';
+    } else {
+      el.status.style.display = 'none';
+    }
 
     if (!q) {
       el.qos.innerHTML = '<span style="color:#8b949e">未进入串流（可正常开游戏）</span>';
@@ -893,10 +942,10 @@
       else el.hint.style.display = 'none';
     }
 
-    el.btnSrv.textContent = '数据中心 ' + srvCfg().label;
-    el.btnRes.textContent = '画质 ' + resCfg().label;
+    el.btnSrv.textContent = '数据中心 ' + srvBtnLabel();
+    el.btnRes.textContent = '画质 ' + resBtnLabel();
     el.btnV4.textContent = 'IPv4 ' + (v4on() ? '强制' : '关');
-    el.btnRegion.textContent = '地区 ' + c.name;
+    el.btnRegion.textContent = '商店地区 ' + c.name;
   }
 
   // ---------- 十四、设置（直接循环，不弹 prompt，避免全屏下被拦）----------
@@ -951,7 +1000,7 @@
       v: VER,
       url: location.href,
       region: cfg(),
-      stream: { pin: S.serverPin, actual: S.serverActual, ipv4Only: v4on(), resolution: resCfg().label, playPatched: S.playPatched },
+      stream: { pin: S.serverPin, actual: S.serverActual, label: srvBtnLabel(), ipv4Only: v4on(), resolution: resBtnLabel(), playPatched: S.playPatched },
       territory: { before: S.territoryBefore, now: S.territoryNow, cookie: getCookie('territory') },
       experiment: { hits: S.expHits, before: S.expBefore, after: S.expAfter, cacheCleared: S.cacheCleared },
       media: { peerConnections: S.pcs, ipv6CandidatesDropped: S.v6dropped },
