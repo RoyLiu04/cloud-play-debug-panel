@@ -1,33 +1,38 @@
 // ==UserScript==
-// @name         Xbox Cloud Gaming Unlock
-// @namespace    https://github.com/RoyLiu04/xbox-cloud-unlock
-// @version      3.2.0
-// @description  让 play.xbox.com 在受限地区可用：改写市场判定与请求头，并提供串流链路设置（数据中心 / 强制 IPv4 / 画质）与迷你 QoS 读数
+// @name         Cloud Play Debug Panel
+// @namespace    https://github.com/RoyLiu04/cloud-play-debug-panel
+// @version      3.3.0
+// @description  play.xbox.com 的本地调试脚本：串流链路读数（丢包 / RTT / 码率 / 分辨率 / 丢帧），以及区域字段、机房、IPv4、画质的对照测试开关。非官方，与 Microsoft 无关联
 // @author       RoyLiu04
 // @license      MIT
 // @match        https://play.xbox.com/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/RoyLiu04/xbox-cloud-unlock/main/xbox-cloud-unlock.user.js
-// @downloadURL  https://raw.githubusercontent.com/RoyLiu04/xbox-cloud-unlock/main/xbox-cloud-unlock.user.js
-// @supportURL   https://github.com/RoyLiu04/xbox-cloud-unlock/issues
+// @updateURL    https://raw.githubusercontent.com/RoyLiu04/cloud-play-debug-panel/main/cloud-play-debug-panel.user.js
+// @downloadURL  https://raw.githubusercontent.com/RoyLiu04/cloud-play-debug-panel/main/cloud-play-debug-panel.user.js
+// @supportURL   https://github.com/RoyLiu04/cloud-play-debug-panel/issues
 // ==/UserScript==
 
 /*
+ * 说明
+ *   第三方非官方脚本：与 Microsoft Corporation 无关联，未获其授权、认可或支持。
+ *   文中 Xbox / xCloud / play.xbox.com 等名称仅用于说明所适用的页面与接口，商标归其权利人所有。
+ *
  * 功能
- *   1. 地区解锁：改写 gears / xboxcomfd 的 experimentation 响应（trafficFilters.territory、market），
- *      并把 territory cookie 校正为所选地区，避免播放页把当前出口 IP 判成「不支持的市场」。
- *   2. 串流链路：可固定数据中心（改写 offeringSettings.regions 的 isDefault 与顺序）、
+ *   1. 区域字段改写：改写 gears / xboxcomfd 的 experimentation 响应（trafficFilters.territory、market），
+ *      并把 territory cookie 校正为所选值，用于对照页面在不同地区判定输入下的行为。
+ *   2. 串流链路：可选择数据中心（改写 offeringSettings.regions 的 isDefault 与顺序）、
  *      剔除 ICE 中的 IPv6 候选（强制 IPv4）、按 settings.osName 选择画质档位
  *      （自动模式下视口高度 ≤ 900 视为小屏，直接压到 720p 档，避免掌机被推 1440p）。
- *   3. 状态读数：右下角小药丸显示实时丢包率，展开可看 RTT / 码率 / 分辨率 / 丢帧，并可切换上述设置。
+ *   3. 状态读数：顶部小药丸显示实时丢包率，展开可看 RTT / 码率 / 分辨率 / 丢帧，并可切换上述设置。
  *
  * 工作方式
  *   页面自身发这几个请求，脚本只在 fetch / XHR 层改写响应与请求体，不修改页面代码：
- *     GET  gears.xboxservices.com/.../experimentation            → 决定 marketAccessContext.physicalMarket
- *     POST cloudgaming.gssv-play-*.xboxlive.com/v2/login/user    → 决定可用的串流数据中心
- *     POST <dc>.core.gssv-play-*.xboxlive.com/v5/sessions/cloud/play → 建会话
+ *     GET  gears.xboxservices.com/.../experimentation            → 页面据此得到 marketAccessContext.physicalMarket
+ *     POST cloudgaming.gssv-play-*.xboxlive.com/v2/login/user    → 返回可用的串流数据中心列表
+ *     POST <dc>.core.gssv-play-*.xboxlive.com/v5/sessions/cloud/play → 建会话参数
  *     GET  <dc>.core.../configuration、/ice                      → 媒体服务地址与 ICE 候选
+ *   这些改写只作用于本机浏览器发出的请求，服务端仍按自己的规则校验。
  *
  * 隐私
  *   · 全部改写都在本机浏览器内完成，脚本不向外发送任何数据。
@@ -36,27 +41,30 @@
  *
  * 参考项目
  *   · redphx/better-xcloud — https://github.com/redphx/better-xcloud
- *     （regions 排序改写、osName 画质档位、x-ms-device-info 设备伪装、gssv 拦截方式）
+ *     （regions 排序改写、osName 画质档位、x-ms-device-info 设备信息覆写、gssv 拦截方式）
  *   · darkchaox/xbox-cloud-gaming-optimizer — https://github.com/darkchaox/xbox-cloud-gaming-optimizer
- *     （旧版页面的地区解锁思路，本项目由此出发）
+ *     （旧版页面的地区判定改写思路，本项目由此出发）
  *
  * 免责声明
- *   仅供学习与研究使用。绕过地区限制可能违反服务条款，使用风险与后果由使用者自行承担。
+ *   个人学习与研究性质的第三方脚本，按「现状」提供，不提供任何担保。
+ *   使用前请自行确认行为符合所在地法律法规及所使用服务的用户协议，风险与后果由使用者自行承担。
+ *   若权利方认为本项目存在不当之处，可通过 Issues 联系，作者会及时修改或下架。
  */
 
 (function () {
   'use strict';
 
-  if (window.__XCU__ && window.__XCU__.v === '3.2.0') return;
+  if (window.__XCU__ && window.__XCU__.v === '3.3.0') return;
 
-  const VER = '3.2.0';
-  const LS_KEY = 'xcu.region';       // 解锁地区（IP）
+  const VER = '3.3.0';
+  const LS_KEY = 'xcu.region';       // 地区（IP）
   const LS_SRV = 'xcu.streamRegion'; // 串流数据中心
   const LS_V4 = 'xcu.forceIPv4';     // 强制 IPv4
   const LS_RES = 'xcu.resolution';   // 画质档位
 
-  // 出口 IP → 期望地区。下面的 IP 只是公开项目中常见的示例地址，
-  // 换成你自己可用的出口地址即可（也可在面板里选择，或直接写进 localStorage 的 xcu.region）。
+  // 地区档位：territory 为要呈现给页面的市场代码，ip 为请求头里携带的对照地址。
+  // 下面的 IP 只是公开资料里常见的示例网段，仅供本地对照测试；
+  // 请按自己的实际情况替换（也可在面板里选择，或直接写进 localStorage 的 xcu.region）。
   const REGIONS = {
     jp: { ip: '138.199.21.239', territory: 'JP', name: '日本' },
     us: { ip: '143.244.47.65', territory: 'US', name: '美国' },
@@ -264,7 +272,7 @@
     }, function () { return res; });
   }
 
-  // ---------- 五、解锁：实验接口改写（physicalMarket）----------
+  // ---------- 五、区域字段改写（physicalMarket）----------
   function rewriteExp(res, u) {
     if (!res || !res.status || res.status < 200 || res.status >= 300) return Promise.resolve(res);
     const ct = (res.headers.get('content-type') || '').toLowerCase();
@@ -797,7 +805,7 @@
       'user-select:none', 'box-shadow:0 2px 10px rgba(0,0,0,.45)', 'white-space:nowrap'
     ].join(';'));
     dotEl = mk('span', 'width:7px;height:7px;border-radius:50%;background:#8b949e;flex:0 0 auto');
-    pillTxt = mk('span', 'color:#c9d1d9', 'xCloud');
+    pillTxt = mk('span', 'color:#c9d1d9', 'Play');
     pillEl.title = '单击展开 · 按住可拖动 · 双击回到顶部中间';
     pillEl.appendChild(dotEl);
     pillEl.appendChild(pillTxt);
@@ -814,7 +822,7 @@
 
     const head = mk('div', 'display:flex;align-items:center;justify-content:space-between;' +
       'margin-bottom:5px;cursor:move;user-select:none');
-    head.appendChild(mk('span', 'font-weight:700;color:#e6edf3', 'xCloud 解锁 v' + VER));
+    head.appendChild(mk('span', 'font-weight:700;color:#e6edf3', 'Play 调试面板 v' + VER));
     const closeBtn = mk('span', 'cursor:pointer;color:#8b949e;padding:0 3px;font-size:14px;line-height:1', '×');
     closeBtn.title = '收起';
     closeBtn.addEventListener('click', function (e) { e.stopPropagation(); setOpen(false, true); });
@@ -912,7 +920,7 @@
 
     // 药丸只显示丢包，颜色即状态
     dotEl.style.background = loss == null ? '#8b949e' : (loss < 2 ? '#3fb950' : (loss < 5 ? '#d29922' : '#f85149'));
-    pillTxt.textContent = loss == null ? 'xCloud' : loss.toFixed(1) + '%';
+    pillTxt.textContent = loss == null ? 'Play' : loss.toFixed(1) + '%';
 
     if (!openUI) return;
 
@@ -1014,7 +1022,7 @@
     const out = Object.keys(REGIONS).map(function (k) {
       return { k: k, label: REGIONS[k].name, sub: REGIONS[k].territory };
     });
-    out.push({ k: 'off', label: '关闭解锁', sub: '不改写' });
+    out.push({ k: 'off', label: '关闭改写', sub: '不改写' });
     return out;
   }
 
